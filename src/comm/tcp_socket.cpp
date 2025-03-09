@@ -28,6 +28,7 @@
 #include <cstring>
 #include <sstream>
 #include <thread>
+#include <fcntl.h>
 
 #include "ur_client_library/log.h"
 #include "ur_client_library/comm/tcp_socket.h"
@@ -70,7 +71,9 @@ bool TCPSocket::setup(const std::string& host, const int port, const size_t max_
   }
 
   if (state_ == SocketState::Connected)
+  {
     return false;
+  }
 
   URCL_LOG_DEBUG("Setting up connection: %s:%d", host.c_str(), port);
 
@@ -99,11 +102,56 @@ bool TCPSocket::setup(const std::string& host, const int port, const size_t max_
     for (struct addrinfo* p = result; p != nullptr; p = p->ai_next)
     {
       socket_fd_ = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+      int flags = fcntl(socket_fd_, F_GETFL, 0);
+      fcntl(socket_fd_, F_SETFL, flags | O_NONBLOCK);
+      int err_code = 0;
 
-      if (socket_fd_ != -1 && open(socket_fd_, p->ai_addr, p->ai_addrlen))
+      auto conn_result = connect(socket_fd_, p->ai_addr, p->ai_addrlen);
+      if (conn_result < 0) {
+        err_code = errno;
+        if (err_code == EINPROGRESS) {
+          fd_set wfd;
+          FD_ZERO(&wfd);
+          FD_SET(socket_fd_, &wfd);
+
+          struct timeval timeout;
+          timeout.tv_usec = reconnection_time_resolved.count() * 1e6;
+
+          URCL_LOG_ERROR("select");
+          conn_result = select(socket_fd_+1, &wfd, NULL, NULL, &timeout);
+          URCL_LOG_ERROR("after select");
+          if (conn_result > 0)
+          {
+            socklen_t len = sizeof(err_code);
+            conn_result = getsockopt(socket_fd_, SOL_SOCKET, SO_ERROR, &err_code, &len);
+            if (conn_result < 0) {
+              err_code = errno;
+            }
+            else {
+              conn_result = (err_code == 0) ? 0 : -1;
+            }
+          }
+          else if (conn_result == 0)
+          {
+              err_code = ETIMEDOUT;
+              conn_result = -1;
+          }
+          else
+          {
+              err_code = errno;
+          }
+        }
+      }
+      if (conn_result == 0)
       {
-        connected = true;
-        break;
+          // connected
+          fcntl(socket_fd_, F_SETFL, flags);
+          connected = true;
+          break;
+      }
+      else
+      {
+          // error, use errCode as needed
       }
     }
 
