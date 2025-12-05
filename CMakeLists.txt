@@ -14,7 +14,7 @@ option(WITH_ASAN "Compile with address sanitizer support" OFF)
 ## Check C++11 support / enable global pedantic and Wall
 ##
 include(DefineCXX17CompilerFlag)
-DEFINE_CXX_17_COMPILER_FLAG(CXX17_FLAG)
+DEFINE_CXX_17_COMPILER_FLAG(CXX20_FLAG)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic")
 
 add_library(urcl SHARED
